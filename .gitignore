@@ -2,8 +2,8 @@
 .env
 
 # Build outputs
-go-db-demo
-go-db-demo.exe
+go-ms-demo
+go-ms-demo.exe
 
 # IDE files
 .vscode/

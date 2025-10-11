@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-2
-      ARTIFACT_BUCKET: go-db-demo-artifacts-906034468384-us-east-2
+      ARTIFACT_BUCKET: go-ms-demo-artifacts-906034468384-us-east-2
       INSTANCE_ID: i-00780106ca1ca36e0
-      BIN_KEY: releases/${{ github.sha }}/go-db-demo
+      BIN_KEY: releases/${{ github.sha }}/go-ms-demo
       MIGS_KEY: releases/${{ github.sha }}/migrations.tar.gz
 
     steps:
@@ -28,7 +28,7 @@ jobs:
           go-version: "1.22"
 
       - name: Build (linux/amd64)
-        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o go-db-demo ./web/cmd
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o go-ms-demo ./web/cmd
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -42,7 +42,7 @@ jobs:
       - name: Upload binary + migrations to S3
         run: |
           set -euo pipefail
-          aws s3 cp ./go-db-demo "s3://${ARTIFACT_BUCKET}/${BIN_KEY}" --only-show-errors
+          aws s3 cp ./go-ms-demo "s3://${ARTIFACT_BUCKET}/${BIN_KEY}" --only-show-errors
           tar -czf migrations.tar.gz -C internal/db/migrations . || echo "No migrations dir"
           aws s3 cp ./migrations.tar.gz "s3://${ARTIFACT_BUCKET}/${MIGS_KEY}" --only-show-errors
 
@@ -53,7 +53,7 @@ jobs:
           CMD=$(cat <<'SCRIPT'
           set -euo pipefail
           APP_DIR="/home/ec2-user/app"
-          BIN_PATH="/tmp/go-db-demo"
+          BIN_PATH="/tmp/go-ms-demo"
           MIGS_DIR="/tmp/migrations"
           BIN_S3="s3://__BUCKET__/__BIN_KEY__"
           MIGS_S3="s3://__BUCKET__/__MIGS_KEY__"
@@ -67,13 +67,13 @@ jobs:
             aws s3 cp "${MIGS_S3}" /tmp/migrations.tar.gz --only-show-errors
             tar -xzf /tmp/migrations.tar.gz -C "${MIGS_DIR}" || true
           fi
-          sudo /usr/local/bin/fetch-env.sh /etc/go-db-demo.env /go-db-demo/prod
-          export $(grep -v '^#' /etc/go-db-demo.env | xargs)
-          pkill -f go-db-demo || true
+          sudo /usr/local/bin/fetch-env.sh /etc/go-ms-demo.env /go-ms-demo/prod
+          export $(grep -v '^#' /etc/go-ms-demo.env | xargs)
+          pkill -f go-ms-demo || true
           sleep 1
           mkdir -p "${APP_DIR}"
-          mv "${BIN_PATH}" "${APP_DIR}/go-db-demo"
-          chmod +x "${APP_DIR}/go-db-demo"
+          mv "${BIN_PATH}" "${APP_DIR}/go-ms-demo"
+          chmod +x "${APP_DIR}/go-ms-demo"
           shopt -s nullglob
           MIG_FILES=("${MIGS_DIR}"/*.up.sql)
           if [ ${#MIG_FILES[@]} -gt 0 ]; then
@@ -85,8 +85,8 @@ jobs:
           fi
           shopt -u nullglob
           sudo systemctl daemon-reload
-          sudo systemctl enable go-db-demo || true
-          sudo systemctl restart go-db-demo
+          sudo systemctl enable go-ms-demo || true
+          sudo systemctl restart go-ms-demo
           sleep 2
           curl -fsS http://localhost:8080/health && echo "OK"
           SCRIPT

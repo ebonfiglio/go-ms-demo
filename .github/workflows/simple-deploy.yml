@@ -19,7 +19,7 @@ jobs:
 
       - name: Build application
         run: |
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o go-db-demo ./web/cmd
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o go-ms-demo ./web/cmd
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
@@ -70,7 +70,7 @@ jobs:
             exit 1
           fi
           echo "Port 22 reachable, copying artifacts..."
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 go-db-demo deploy@"$HOST":/tmp/go-db-demo-new
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 go-ms-demo deploy@"$HOST":/tmp/go-ms-demo-new
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 internal/db/migrations/*.up.sql deploy@"$HOST":/tmp/
 
       - name: Deploy on server
@@ -84,7 +84,7 @@ jobs:
             set -euo pipefail
 
             APP_DIR="$HOME/app"
-            BIN_TMP="/tmp/go-db-demo-new"
+            BIN_TMP="/tmp/go-ms-demo-new"
             MIGS_GLOB="/tmp/*.up.sql"
 
             quote_ident() {
@@ -95,12 +95,12 @@ jobs:
             DB_NAME_Q=$(quote_ident "${DB_NAME}")
             DB_USER_Q=$(quote_ident "${DB_USER}")
 
-            pkill -f go-db-demo || true
+            pkill -f go-ms-demo || true
             sleep 1
 
             mkdir -p "$APP_DIR"
-            mv "$BIN_TMP" "$APP_DIR/go-db-demo"
-            chmod +x "$APP_DIR/go-db-demo"
+            mv "$BIN_TMP" "$APP_DIR/go-ms-demo"
+            chmod +x "$APP_DIR/go-ms-demo"
 
             cat > "$APP_DIR/.env" <<ENVEOF
             SERVER_HOST=0.0.0.0
@@ -139,7 +139,7 @@ jobs:
             # Start application
             cd "$APP_DIR"
             echo "Starting application..."
-            nohup ./go-db-demo > app.log 2>&1 &
+            nohup ./go-ms-demo > app.log 2>&1 &
             echo $! > app.pid
             sleep 2
 

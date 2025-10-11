@@ -1,4 +1,4 @@
-module go-db-demo
+module go-ms-demo
 
 go 1.24.4
 
