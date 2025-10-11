@@ -2,7 +2,7 @@ name: Simple Deploy to Ubuntu VM
 
 on:
   push:
-    branches: [ "develop" ]
+    # branches: [ "develop" ]
 
 jobs:
   deploy:
