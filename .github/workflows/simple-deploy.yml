@@ -1,0 +1,166 @@
+name: Simple Deploy to Ubuntu VM
+
+on:
+  push:
+    branches: [ "develop" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build application
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o go-db-demo ./web/cmd
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tags: tag:ci
+
+      - name: Check required secrets
+        env:
+            TS_HOST: ${{ secrets.TS_HOST }}
+            DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+            DB_HOST: ${{ secrets.DB_HOST }}
+            DB_USER: ${{ secrets.DB_USER }}
+            DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+            DB_NAME: ${{ secrets.DB_NAME }}
+        run: |
+            set -euo pipefail
+            missing=0
+            for var in TS_HOST DEPLOY_SSH_KEY DB_HOST DB_USER DB_PASSWORD DB_NAME; do
+            if [ -z "${!var:-}" ]; then
+                echo "ERROR: $var is missing"
+                missing=1
+            fi
+            done
+            if [ "$missing" -eq 1 ]; then
+            echo "Add the missing secrets in your repo settings."
+            exit 1
+            fi
+            echo "All secrets present"
+
+
+      - name: Setup SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.TS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Test connectivity & copy artifacts
+        run: |
+          set -euo pipefail
+          HOST="${{ secrets.TS_HOST }}"
+          echo "Testing connectivity to $HOST..."
+          if ! timeout 10 nc -zv "$HOST" 22 2>/dev/null; then
+            echo "Cannot reach $HOST on port 22"
+            exit 1
+          fi
+          echo "Port 22 reachable, copying artifacts..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 go-db-demo deploy@"$HOST":/tmp/go-db-demo-new
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 internal/db/migrations/*.up.sql deploy@"$HOST":/tmp/
+
+      - name: Deploy on server
+        run: |
+            set -euo pipefail
+            HOST="${{ secrets.TS_HOST }}"
+
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@"$HOST" \
+            DB_HOST="${DB_HOST}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" DB_NAME="${DB_NAME}" \
+            bash -s << 'EOF'
+            set -euo pipefail
+
+            APP_DIR="$HOME/app"
+            BIN_TMP="/tmp/go-db-demo-new"
+            MIGS_GLOB="/tmp/*.up.sql"
+
+            quote_ident() {
+                # doubles internal " and wraps with "
+                printf '"%s"' "$(printf '%s' "$1" | sed 's/"/""/g')"
+            }
+
+            DB_NAME_Q=$(quote_ident "${DB_NAME}")
+            DB_USER_Q=$(quote_ident "${DB_USER}")
+
+            pkill -f go-db-demo || true
+            sleep 1
+
+            mkdir -p "$APP_DIR"
+            mv "$BIN_TMP" "$APP_DIR/go-db-demo"
+            chmod +x "$APP_DIR/go-db-demo"
+
+            cat > "$APP_DIR/.env" <<ENVEOF
+            SERVER_HOST=0.0.0.0
+            SERVER_PORT=8080
+            GIN_MODE=release
+            DB_HOST=${DB_HOST}
+            DB_PORT=5432
+            DB_USER=${DB_USER}
+            DB_PASSWORD=${DB_PASSWORD}
+            DB_NAME=${DB_NAME}
+            DB_SSL_MODE=disable
+            ENVEOF
+
+            echo "Ensuring privileges for ${DB_USER} on ${DB_NAME}..."
+            
+            {
+                PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d postgres -v ON_ERROR_STOP=1 -c "
+                    GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME_Q} TO ${DB_USER_Q};" 2>/dev/null || 
+                echo "Database-level privileges may already be set or user lacks permission to grant them"
+                
+                PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -c "
+                    GRANT ALL ON SCHEMA public TO ${DB_USER_Q};
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER_Q};
+                    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER_Q};" 2>/dev/null ||
+                echo "Schema-level privileges may already be set or user lacks permission to grant them"
+            }
+
+            echo "Running migrations as ${DB_USER} on ${DB_NAME}..."
+            shopt -s nullglob
+            for f in ${MIGS_GLOB}; do
+            echo "Applying: $f"
+            PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -f "$f"
+            done
+            shopt -u nullglob
+
+            # Start application
+            cd "$APP_DIR"
+            echo "Starting application..."
+            nohup ./go-db-demo > app.log 2>&1 &
+            echo $! > app.pid
+            sleep 2
+
+            # Health check
+            if curl -fsS http://localhost:8080/health > /dev/null; then
+            echo "Health check passed"
+            else
+            echo "Health check failed. Recent logs:"
+            tail -200 app.log || true
+            exit 1
+            fi
+            EOF
+        env:
+            DB_HOST: ${{ secrets.DB_HOST }}
+            DB_USER: ${{ secrets.DB_USER }}
+            DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+            DB_NAME: ${{ secrets.DB_NAME }}
+
+
+      - name: Verify deployment
+        run: |
+          set -euo pipefail
+          HOST="${{ secrets.TS_HOST }}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@"$HOST" 'curl -fsS http://localhost:8080/health && echo "Final verification: SUCCESS"'

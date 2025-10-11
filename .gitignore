@@ -1,0 +1,17 @@
+# Environment variables
+.env
+
+# Build outputs
+go-db-demo
+go-db-demo.exe
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

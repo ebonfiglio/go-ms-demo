@@ -1,0 +1,137 @@
+name: Deploy app
+
+on:
+  push:
+    branches: ["main"]
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # =========================
+  # AWS (EC2 + RDS via SSM) — push to main
+  # =========================
+  deploy_aws:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-2
+      ARTIFACT_BUCKET: go-db-demo-artifacts-906034468384-us-east-2
+      INSTANCE_ID: i-00780106ca1ca36e0
+      BIN_KEY: releases/${{ github.sha }}/go-db-demo
+      MIGS_KEY: releases/${{ github.sha }}/migrations.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build (linux/amd64)
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o go-db-demo ./web/cmd
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::906034468384:role/GitHubRole 
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Who am I? (sanity)
+        run: aws sts get-caller-identity
+
+      - name: Upload binary + migrations to S3
+        run: |
+          set -euo pipefail
+          aws s3 cp ./go-db-demo "s3://${ARTIFACT_BUCKET}/${BIN_KEY}" --only-show-errors
+          tar -czf migrations.tar.gz -C internal/db/migrations . || echo "No migrations dir"
+          aws s3 cp ./migrations.tar.gz "s3://${ARTIFACT_BUCKET}/${MIGS_KEY}" --only-show-errors
+
+      - name: SSM - deploy on EC2
+        id: ssm
+        run: |
+          set -euo pipefail
+          CMD=$(cat <<'SCRIPT'
+          set -euo pipefail
+          APP_DIR="/home/ec2-user/app"
+          BIN_PATH="/tmp/go-db-demo"
+          MIGS_DIR="/tmp/migrations"
+          BIN_S3="s3://__BUCKET__/__BIN_KEY__"
+          MIGS_S3="s3://__BUCKET__/__MIGS_KEY__"
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo dnf -y install postgresql jq tar gzip curl || sudo yum -y install postgresql jq tar gzip curl
+          fi
+          aws s3 cp "${BIN_S3}" "${BIN_PATH}" --only-show-errors
+          chmod +x "${BIN_PATH}"
+          rm -rf "${MIGS_DIR}"; mkdir -p "${MIGS_DIR}"
+          if aws s3 ls "${MIGS_S3}" >/dev/null 2>&1; then
+            aws s3 cp "${MIGS_S3}" /tmp/migrations.tar.gz --only-show-errors
+            tar -xzf /tmp/migrations.tar.gz -C "${MIGS_DIR}" || true
+          fi
+          sudo /usr/local/bin/fetch-env.sh /etc/go-db-demo.env /go-db-demo/prod
+          export $(grep -v '^#' /etc/go-db-demo.env | xargs)
+          pkill -f go-db-demo || true
+          sleep 1
+          mkdir -p "${APP_DIR}"
+          mv "${BIN_PATH}" "${APP_DIR}/go-db-demo"
+          chmod +x "${APP_DIR}/go-db-demo"
+          shopt -s nullglob
+          MIG_FILES=("${MIGS_DIR}"/*.up.sql)
+          if [ ${#MIG_FILES[@]} -gt 0 ]; then
+            IFS=$'\n' MIG_FILES_SORTED=($(printf "%s\n" "${MIG_FILES[@]}" | sort)); unset IFS
+            for f in "${MIG_FILES_SORTED[@]}"; do
+              echo "Applying: $(basename "$f")"
+              PGPASSWORD="${DB_PASSWORD}" PGSSLMODE=require psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -f "$f"
+            done
+          fi
+          shopt -u nullglob
+          sudo systemctl daemon-reload
+          sudo systemctl enable go-db-demo || true
+          sudo systemctl restart go-db-demo
+          sleep 2
+          curl -fsS http://localhost:8080/health && echo "OK"
+          SCRIPT
+          )
+          CMD_JSON=$(jq -rn --arg bucket "${ARTIFACT_BUCKET}" \
+                            --arg binKey "${BIN_KEY}" \
+                            --arg migsKey "${MIGS_KEY}" \
+                            --arg script "$CMD" \
+            '{
+              "commands": [
+                ($script
+                  | gsub("__BUCKET__"; $bucket)
+                  | gsub("__BIN_KEY__"; $binKey)
+                  | gsub("__MIGS_KEY__"; $migsKey))
+              ]
+            }')
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy $GITHUB_SHA" \
+            --parameters "$CMD_JSON" \
+            --region "${AWS_REGION}" \
+            --query "Command.CommandId" \
+            --output text)
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+      - name: SSM - wait for completion & logs
+        run: |
+          set -euo pipefail
+          COMMAND_ID="${{ steps.ssm.outputs.COMMAND_ID }}"
+          for i in {1..60}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "${INSTANCE_ID}" \
+              --region "${AWS_REGION}" \
+              --query "Status" --output text || true)
+            if [[ "$STATUS" == "Success" ]]; then break; fi
+            if [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
+              echo "Status: $STATUS"
+              aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${INSTANCE_ID}" --region "${AWS_REGION}" --output text || true
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "----- STDOUT -----"
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${INSTANCE_ID}" --region "${AWS_REGION}" --query "StandardOutputContent" --output text || true
+          echo "----- STDERR -----"
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${INSTANCE_ID}" --region "${AWS_REGION}" --query "StandardErrorContent" --output text || true

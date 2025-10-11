@@ -1,0 +1,32 @@
+{{define "users/index.html"}}
+
+<h1>User Details</h1>
+    
+    <table style="border-collapse: collapse; margin: 20px 0;">
+        <tr>
+            <td style="padding: 8px; font-weight: bold;">ID:</td>
+            <td style="padding: 8px;">{{.User.ID}}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px; font-weight: bold;">Name:</td>
+            <td style="padding: 8px;">{{.User.Name}}</td>
+        </tr>
+          <tr>
+            <td style="padding: 8px; font-weight: bold;">Organization ID:</td>
+            <td style="padding: 8px;">{{.User.OrganizationID}}</td>
+        </tr>
+         <tr>
+            <td style="padding: 8px; font-weight: bold;">Job ID:</td>
+            <td style="padding: 8px;">{{.User.JobID}}</td>
+        </tr>
+    </table>
+    
+    <div style="margin-top: 20px;">
+        <a href="/users/{{.User.ID}}/edit">
+            <button type="button">Edit</button>
+        </a><br>
+        <a href="/users">
+            <button type="button">Back to List</button>
+        </a>
+    </div>
+    {{end}}

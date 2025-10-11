@@ -1,0 +1,45 @@
+{{define "organizations/list.html"}}
+<h2>Organizations</h2>
+<a href="/organizations/new">
+    <button>New Organization</button>
+</a>
+<a href="/">
+    <button>Back</button>
+</a>
+
+{{if .Error}}
+<div style="color: red; margin-bottom: 10px;">
+    Error: {{.Error}}
+</div>
+{{end}}
+
+<table border="1" cellpadding="10" cellspacing="0">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Organizations}}
+        <tr>
+            <td>{{.ID}}</td>
+            <td><a href="/organizations/{{.ID}}">{{.Name}}</a></td>
+            <td>
+                <a href="/organizations/{{.ID}}/edit">Edit</a>
+                 <form method="POST" action="/organizations/{{.ID}}/delete" style="display: inline;">
+                    <input type="hidden" name="_method" value="DELETE">
+                    <button type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {{else}}
+        <tr>
+            <td colspan="3">No organizations found</td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{end}}
+
