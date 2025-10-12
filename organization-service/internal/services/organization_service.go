@@ -1,8 +1,8 @@
-package service
+package services
 
 import (
 	"fmt"
-	"go-ms-demo/internal/domain"
+	"go-ms-demo/organization-service/internal/domain"
 )
 
 type OrganizationService struct {
