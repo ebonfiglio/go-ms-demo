@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
-	"go-ms-demo/organization-service/internal/config"
 	"go-ms-demo/organization-service/internal/db"
+	"go-ms-demo/organization-service/internal/handlers"
+	"go-ms-demo/organization-service/internal/routers"
+	"go-ms-demo/organization-service/internal/services"
 	"log"
 	"os"
 	"os/signal"
@@ -14,7 +16,6 @@ import (
 )
 
 func main() {
-	cfg = config.LoadConfig()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting Organization Service...")
@@ -25,6 +26,10 @@ func main() {
 	router := gin.Default()
 
 	orgRepo := db.NewOrganizationRepository(database)
+	orgService := services.NewOrganizationService(orgRepo)
+	orgHandler := handlers.NewHandler(orgService)
+
+	routers.SetupRoutes(router, orgHandler)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
@@ -38,7 +43,7 @@ func main() {
 		log.Printf("Error closing database: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	log.Println("Server exited")

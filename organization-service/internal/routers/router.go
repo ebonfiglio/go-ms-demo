@@ -1,4 +1,4 @@
-package router
+package routers
 
 import (
 	"go-ms-demo/organization-service/internal/domain"
