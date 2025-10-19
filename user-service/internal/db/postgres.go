@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"go-ms-demo/internal/config"
+	"go-ms-demo/user-service/internal/config"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"

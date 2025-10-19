@@ -2,7 +2,7 @@ package db
 
 import (
 	"fmt"
-	"go-ms-demo/internal/domain"
+	"go-ms-demo/user-service/internal/domain"
 
 	"github.com/jmoiron/sqlx"
 )

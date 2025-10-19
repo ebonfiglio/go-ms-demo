@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"go-ms-demo/internal/domain"
+	"go-ms-demo/job-service/internal/domain"
 )
 
 type JobService struct {
